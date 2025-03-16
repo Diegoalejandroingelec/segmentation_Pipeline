@@ -4,90 +4,80 @@ from clearml.automation import HyperParameterOptimizer, UniformParameterRange
 from clearml.automation.optuna import OptimizerOptuna
 from ultralytics import YOLO
 
-# --------------------------------------------------
-# STEP 1: Dataset Versioning
-# --------------------------------------------------
+# ------------------------
+# STEP 1: Dataset versioning
+# ------------------------
 @PipelineDecorator.component(return_values=["dataset_id"])
 def version_dataset():
-    """
-    1) Creates (or updates) a dataset version in ClearML
-    2) Returns the dataset ID, which other steps can use or log
-    """
-    dataset_project = "YOLOv9_Training"
-    dataset_name = "YOLOv9_Dataset"
-    dataset_path = "./dataset"  # local path to your dataset
-
     dataset = Dataset.create(
-        dataset_name=dataset_name,
-        dataset_project=dataset_project,
+        dataset_name="YOLOv9_Dataset",
+        dataset_project="YOLOv9_Training",
         dataset_tags=["version1"]
     )
-    dataset.add_files(path=dataset_path)
-    # Optional: dataset.upload(output_url="s3://your_bucket/datasets")
 
+    print("Adding dataset files...")
+    dataset.add_files(path="./datasets/color_products_dataset")
+
+    print("Uploading dataset files to ClearML storage...")
+    dataset.upload()  # Ensure files are uploaded before finalizing
+
+    print("Finalizing dataset version...")
     dataset.finalize()
-    print(f"[Dataset Versioning] Dataset version created: {dataset.id}")
-    return dataset.id
+    
+    dataset_id = dataset.id
 
-# --------------------------------------------------
-# STEP 2: Base YOLOv9 Training
-# --------------------------------------------------
+    print(f"Dataset version created: {dataset.id}")
+    return dataset_id
+
+# ------------------------
+# STEP 2: Base training
+# ------------------------
 @PipelineDecorator.component(return_values=["base_task_id"])
 def base_train_yolov9(dataset_id):
-    """
-    1) Initializes a ClearML task for YOLOv9
-    2) Trains a base YOLOv9 model
-    3) Returns the newly created task ID so we can reference it later
-    """
-    # Initialize the training task
+    # init ClearML task
     task = Task.init(
         project_name="YOLOv9_Training",
-        task_name="Base_Train_YOLOv9_Pipeline",
+        task_name="Base_Train_YOLOv9",
         reuse_last_task_id=False
     )
-
-    # Connect dataset info (so we can trace which dataset version was used)
-    # This isn't mandatory, but good for traceability:
+    # link dataset version (for traceability)
     task.connect_configuration({"dataset_id": dataset_id})
 
-    # Define training parameters
+    # define hyperparams
     params = {
-        "data_config": "./data.yaml",               # Points to the dataset config
+        "data_config": "./data.yaml",
         "model_config": "./yolov9_architecture.yaml",
-        "epochs": 50,
+        "epochs": 1,
         "img_size": 640,
-        "batch_size": 4,
+        "batch_size": 8,
     }
-    task.connect(params)  # Logs hyperparameters to ClearML
+    task.connect(params)
 
-    # Train YOLOv9
+    print("TRAINING PARAMS", params) 
+    # Explicitly convert any numeric hyperparams to int:
+    params["epochs"] = int(float(params["epochs"]))
+    params["img_size"] = int(float(params["img_size"]))
+    params["batch_size"] = int(float(params["batch_size"]))
+
+    # train with ultralytics
     model = YOLO(params["model_config"])
-    _results = model.train(
+    model.train(
         data=params["data_config"],
         epochs=params["epochs"],
         imgsz=params["img_size"],
-        batch=params["batch_size"],
+        batch=params["batch_size"]
     )
-
-    task.get_logger().report_text("Base YOLOv9 training completed!")
-    print("[Base Train YOLOv9] Training completed!")
 
     return task.id
 
-# --------------------------------------------------
-# STEP 3: Hyperparameter Optimization
-# --------------------------------------------------
+# ------------------------
+# STEP 3: Hyperparameter Tuning
+# ------------------------
 @PipelineDecorator.component()
 def hyperparam_optimize(base_task_id):
-    """
-    1) Uses the base_task_id from step 2 as a template for HPO
-    2) Runs multiple experiments with different hyperparams
-    3) Prints the best run and downloads its best model artifact
-    """
-    # Initialize an optimizer task
     opt_task = Task.init(
         project_name="YOLOv9_Training",
-        task_name="YOLOv9_HPO_Pipeline",
+        task_name="YOLOv9_HPO",
         task_type=Task.TaskTypes.optimizer,
         reuse_last_task_id=False,
     )
@@ -95,66 +85,64 @@ def hyperparam_optimize(base_task_id):
     optimizer = HyperParameterOptimizer(
         base_task_id=base_task_id,
         hyper_parameters=[
-            # Param paths must match your training script's structure in ClearML UI
-            UniformParameterRange("epochs", min_value=20, max_value=60, step_size=20),
-            UniformParameterRange("img_size", min_value=320, max_value=640, step_size=160),
-            UniformParameterRange("batch_size", min_value=2, max_value=6, step_size=2),
+            UniformParameterRange("General/epochs", 2, 6, step_size=2),
+            UniformParameterRange("General/img_size", 320, 640, step_size=160),
+            UniformParameterRange("General/batch_size", 2, 8, step_size=2),
         ],
+        # this is the objective metric we want to maximize/minimize
         objective_metric_title="metrics",
         objective_metric_series="mAP_0.5",
-        objective_metric_sign="max",   # YOLO's mAP -> maximize
+        # now we decide if we want to maximize it or minimize it (accuracy we maximize)
+        objective_metric_sign="max",
+        # let us limit the number of concurrent experiments,
+        # this in turn will make sure we don't bombard the scheduler with experiments.
+        # if we have an auto-scaler connected, this, by proxy, will limit the number of machine
         max_number_of_concurrent_tasks=1,
+        # this is the optimizer class (actually doing the optimization)
+        # Currently, we can choose from GridSearch, RandomSearch or OptimizerBOHB (Bayesian optimization Hyper-Band)
         optimizer_class=OptimizerOptuna,
-        save_top_k_tasks_only=3,
-        total_max_jobs=5,
+        # If specified only the top K performing Tasks will be kept, the others will be automatically archived
+        save_top_k_tasks_only=5,  # 5,
+        compute_time_limit=None,
+        total_max_jobs=20,
+        min_iteration_per_job=None,
+        max_iteration_per_job=None,
     )
 
-    optimizer.set_time_limit(in_minutes=120)  # 2 hour time limit
     optimizer.start_locally()
     optimizer.wait()
     optimizer.stop()
 
-    print("[HPO] Hyperparameter optimization finished!")
-
-    # Find the best experiment
-    top_experiments = optimizer.get_top_experiments(top_k=1)
-    if not top_experiments:
-        print("[HPO] No experiments found.")
+    top_exps = optimizer.get_top_experiments(top_k=1)
+    if not top_exps:
+        print("No experiments found!")
         return
 
-    best_experiment = top_experiments[0]
-    best_experiment_id = best_experiment.id
-    best_map = best_experiment.get_last_scalar_metrics().get("metrics", {}).get("mAP_0.5", {}).get("last")
-    print(f"[HPO] Best experiment ID: {best_experiment_id}, mAP_0.5={best_map}")
+    best_exp = top_exps[0]
+    best_exp_id = best_exp.id
+    best_map = best_exp.get_last_scalar_metrics().get("metrics", {}).get("mAP_0.5", {}).get("last")
+    print(f"Best experiment ID: {best_exp_id}, mAP={best_map}")
 
-    # Download the best model artifact if YOLO saved it
-    best_experiment_task = Task.get_task(task_id=best_experiment_id)
-    artifacts = best_experiment_task.artifacts
-    for artifact_name, artifact_obj in artifacts.items():
+    # optionally download best weights
+    best_exp_task = Task.get_task(task_id=best_exp_id)
+    for artifact_name, artifact_obj in best_exp_task.artifacts.items():
         if "best" in artifact_name.lower() or "weights" in artifact_name.lower():
             local_path = artifact_obj.get_local_copy()
-            print(f"[HPO] Downloaded best model artifact '{artifact_name}' to: {local_path}")
+            print(f"Downloaded best model artifact '{artifact_name}' to {local_path}")
 
-# --------------------------------------------------
-# ASSEMBLE THE PIPELINE
-# --------------------------------------------------
+# ------------------------
+# Pipeline flow function
+# ------------------------
 @PipelineDecorator.pipeline(
     name="YOLOv9_EndToEnd_Pipeline",
-    project="YOLOv9_Training",
-    version="1.0"
+    project="YOLOv9_Training"
 )
 def run_pipeline():
-    """
-    Orchestrates three steps:
-      1) version_dataset
-      2) base_train_yolov9
-      3) hyperparam_optimize
-    """
     dataset_id = version_dataset()
-    base_task_id = base_train_yolov9(dataset_id=dataset_id)
-    hyperparam_optimize(base_task_id=base_task_id)
+    base_id = base_train_yolov9(dataset_id=dataset_id)
+    hyperparam_optimize(base_task_id=base_id)
 
 if __name__ == "__main__":
-    # Execute pipeline locally
     print("Running YOLOv9 pipeline locally...")
     PipelineDecorator.run_locally()
+    run_pipeline()
