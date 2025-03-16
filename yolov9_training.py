@@ -10,7 +10,7 @@ task = Task.init(project_name='YOLOv9_Training', task_name='Train_YOLOv9_with_Cl
 # Define training parameters
 data_config = './data.yaml'  # YAML file with dataset configuration (train/val paths, classes, etc.)
 model_config = './yolov9_architecture.yaml'                # Your YOLOv9 configuration file (ensure this file exists or modify accordingly)
-epochs = 50                                 # Number of training epochs
+epochs = 1                                 # Number of training epochs
 img_size = 640                              # Image size (can adjust based on your requirements)
 
 # Create the YOLO model (this uses the configuration file provided)
