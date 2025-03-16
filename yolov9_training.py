@@ -18,7 +18,36 @@ model = YOLO(model_config)
 
 # Start training with the defined parameters.
 # Ultralytics will automatically log training progress, and ClearML will capture these metrics.
-results = model.train(data=data_config, epochs=epochs, imgsz=img_size, batch=8)
+results = model.train(data=data_config,
+                        epochs=epochs,
+                        imgsz=img_size,
+                        batch=8,
+                        lr0=0.01,          # initial learning rate
+                        lrf=0.001,          # final OneCycleLR learning rate
+                        momentum=0.937,    # SGD momentum / Adam beta1
+                        weight_decay=0.0005,   # optimizer weight decay
+                        warmup_epochs=3.0,     # number of warmup epochs
+                        warmup_momentum=0.8,   # initial momentum during warmup
+                        warmup_bias_lr=0.1,    # initial bias lr during warmup
+                        box=7.5,           # box loss gain
+                        cls=0.5,           # classification loss gain
+                        dfl=1.5,           # distribution focal loss gain
+                        iou=0.20,        # IoU training threshold
+                        hsv_h=0.015,       # HSV hue augmentation
+                        hsv_s=0.7,         # HSV saturation augmentation
+                        hsv_v=0.4,         # HSV value augmentation
+                        degrees=0.0,       # rotation (+/- deg)
+                        translate=0.1,     # translation (+/- fraction)
+                        scale=0.9,         # scale (+/- gain)
+                        shear=0.0,         # shear (+/- deg)
+                        perspective=0.0,   # perspective (+/- fraction)
+                        flipud=0.0,        # up-down flip probability
+                        fliplr=0.5,        # left-right flip probability
+                        mosaic=1.0,        # mosaic augmentation probability
+                        mixup=0.15,        # mixup augmentation probability
+                        copy_paste=0.3,     # segment copy-paste augmentation probability
+                        optimizer='AdamW',   # optimizer
+)
 
 # Optionally, you can log additional metrics or artifacts using ClearML APIs
 # For example, logging the training results summary:

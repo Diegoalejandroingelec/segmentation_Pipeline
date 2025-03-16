@@ -48,9 +48,33 @@ def base_train_yolov9(dataset_id):
     default_params = {
         "data_config": "./data.yaml",
         "model_config": "./yolov9_architecture.yaml",
-        "epochs": 1,
+        "epochs": 20,
         "img_size": 640,
         "batch_size": 8,
+        "lr0": 0.01,          # initial learning rate
+        "lrf": 0.001,         # final OneCycleLR learning rate
+        "momentum": 0.937,    # SGD momentum / Adam beta1
+        "weight_decay": 0.001,   # optimizer weight decay
+        "warmup_epochs": 3.0,     # number of warmup epochs
+        "warmup_momentum": 0.8,   # initial momentum during warmup
+        "warmup_bias_lr": 0.1,    # initial bias lr during warmup
+        "box": 0.02,               # box loss gain
+        "cls": 0.5,               # classification loss gain
+        "iou": 0.20,              # IoU training threshold
+        "hsv_h": 0.015,           # HSV hue augmentation
+        "hsv_s": 0.7,             # HSV saturation augmentation
+        "hsv_v": 0.4,             # HSV value augmentation
+        "degrees": 0.0,           # rotation (+/- deg)
+        "translate": 0.1,         # translation (+/- fraction)
+        "scale": 0.9,             # scale (+/- gain)
+        "shear": 0.0,             # shear (+/- deg)
+        "perspective": 0.0,       # perspective (+/- fraction)
+        "flipud": 0.0,            # up-down flip probability
+        "fliplr": 0.5,            # left-right flip probability
+        "mosaic": 1.0,            # mosaic augmentation probability
+        "mixup": 0.15,            # mixup augmentation probability
+        "copy_paste": 0.3,        # segment copy-paste augmentation probability
+        "optimizer": "AdamW",     # optimizer
     }
 
     # 3) Fetch any parameter overrides from the Task config
@@ -92,19 +116,36 @@ def base_train_yolov9(dataset_id):
         data=params["data_config"],
         epochs=params["epochs"],
         imgsz=params["img_size"],
-        batch=params["batch_size"]
+        batch=params["batch_size"],
+        lr0=params["lr0"],
+        lrf=params["lrf"],
+        momentum=params["momentum"],
+        weight_decay=params["weight_decay"],
+        warmup_epochs=params["warmup_epochs"],
+        warmup_momentum=params["warmup_momentum"],
+        warmup_bias_lr=params["warmup_bias_lr"],
+        box=params["box"],
+        cls=params["cls"],
+        iou=params["iou"],
+        hsv_h=params["hsv_h"],
+        hsv_s=params["hsv_s"],
+        hsv_v=params["hsv_v"],
+        degrees=params["degrees"],
+        translate=params["translate"],
+        scale=params["scale"],
+        shear=params["shear"],
+        perspective=params["perspective"],
+        flipud=params["flipud"],
+        fliplr=params["fliplr"],
+        mosaic=params["mosaic"],
+        mixup=params["mixup"],
+        copy_paste=params["copy_paste"],
+        optimizer=params["optimizer"],
     )
     try:
         print("logging metrics...")
         # 1) Grab the ClearML logger
         logger = task.get_logger()
-
-        logger.report_scalar(
-            title="metrics",        # <-- must match objective_metric_title
-            series="mAP_0.5",       # <-- must match objective_metric_series
-            iteration=params["epochs"],  # or 0, or final epoch index
-            value=results.results_dict['metrics/mAP50(M)']
-        )
 
         # 2) Extract metrics from YOLO results 
         if hasattr(results, "results_dict") and isinstance(results.results_dict, dict):
@@ -148,13 +189,33 @@ def hyperparam_optimize(base_task_id):
     optimizer = HyperParameterOptimizer(
         base_task_id=base_task_id,
         hyper_parameters=[
-            UniformParameterRange("General/epochs", 2, 6, step_size=2),
-            UniformParameterRange("General/img_size", 320, 640, step_size=160),
-            UniformParameterRange("General/batch_size", 2, 8, step_size=2),
+            UniformParameterRange("General/lr0", min_value=1e-5, max_value=1e-1),
+            UniformParameterRange("General/lrf", min_value=1e-3, max_value=1.0),
+            UniformParameterRange("General/momentum", min_value=0.8, max_value=0.99),
+            UniformParameterRange("General/weight_decay", min_value=0.0, max_value=0.001),
+            UniformParameterRange("General/warmup_epochs", min_value=0.0, max_value=5.0),
+            UniformParameterRange("General/warmup_momentum", min_value=0.0, max_value=0.95),
+            UniformParameterRange("General/warmup_bias_lr", min_value=0.0, max_value=0.2),
+            UniformParameterRange("General/box", min_value=0.02, max_value=0.2),
+            UniformParameterRange("General/cls", min_value=0.2, max_value=4.0),
+            UniformParameterRange("General/iou", min_value=0.1, max_value=0.8),
+            UniformParameterRange("General/hsv_h", min_value=0.0, max_value=0.1),
+            UniformParameterRange("General/hsv_s", min_value=0.0, max_value=0.9),
+            UniformParameterRange("General/hsv_v", min_value=0.0, max_value=0.9),
+            UniformParameterRange("General/degrees", min_value=0.0, max_value=45.0),
+            UniformParameterRange("General/translate", min_value=0.0, max_value=0.9),
+            UniformParameterRange("General/scale", min_value=0.0, max_value=0.9),
+            UniformParameterRange("General/shear", min_value=0.0, max_value=10.0),
+            UniformParameterRange("General/perspective", min_value=0.0, max_value=0.001),
+            UniformParameterRange("General/flipud", min_value=0.0, max_value=1.0),
+            UniformParameterRange("General/fliplr", min_value=0.0, max_value=1.0),
+            UniformParameterRange("General/mosaic", min_value=0.0, max_value=1.0),
+            UniformParameterRange("General/mixup", min_value=0.0, max_value=1.0),
+            UniformParameterRange("General/copy_paste", min_value=0.0, max_value=1.0),
         ],
         # this is the objective metric we want to maximize/minimize
         objective_metric_title="metrics",
-        objective_metric_series="mAP_0.5",
+        objective_metric_series="metrics/mAP50(M)",
         # now we decide if we want to maximize it or minimize it (accuracy we maximize)
         objective_metric_sign="max",
         # let us limit the number of concurrent experiments,
@@ -167,7 +228,7 @@ def hyperparam_optimize(base_task_id):
         # If specified only the top K performing Tasks will be kept, the others will be automatically archived
         save_top_k_tasks_only=5,  # 5,
         compute_time_limit=None,
-        total_max_jobs=20,
+        total_max_jobs=10,
         min_iteration_per_job=None,
         max_iteration_per_job=None,
     )
@@ -183,7 +244,7 @@ def hyperparam_optimize(base_task_id):
 
     best_exp = top_exps[0]
     best_exp_id = best_exp.id
-    best_map = best_exp.get_last_scalar_metrics().get("metrics", {}).get("mAP_0.5", {}).get("last")
+    best_map = best_exp.get_last_scalar_metrics().get("metrics", {}).get("metrics/mAP50(M)", {}).get("last")
     print(f"Best experiment ID: {best_exp_id}, mAP={best_map}")
 
     # optionally download best weights
